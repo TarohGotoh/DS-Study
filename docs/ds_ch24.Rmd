@@ -568,4 +568,4 @@ data.frame(train = c(lda_train_err2, qda_train_err2),
 ```
 
 ### 2.1章～2.3章へ戻る
-[2.1章~2.3章 2群の場合のベイズ判別法](https://tarohgotoh.github.io/DS-Study/)
+[2.1章~2.3章 2群の場合のベイズ判別法](./)
