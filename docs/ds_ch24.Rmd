@@ -1,0 +1,571 @@
+---
+title: "スパース回帰分析とパターン認識"
+author: "後藤太郎"
+date: "2023-11-16"
+output:
+  html_document:
+    toc: true
+    df_print: paged
+    theme:
+      version: 4
+      base_font:
+        google: "Quicksand"
+      heading_font:
+        google: "Quicksand"
+      code_font: 
+        google: "Source Code Pro"
+      #font_scale: 1.2
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_chunk$set(dev = "ragg_png")
+par(family = "Noto Sans CJK JP")
+ggplot2::theme_set(ggplot2::theme_bw() + ggplot2::theme(text = ggplot2::element_text(family = "Noto Sans CJK JP")))
+```
+
+## 第2章 統計手法によるパターン認識（2.4章）
+### 多群の場合のベイズ判別  
+- 3群の判別分析  
+判別関数（線形/2次形式）は2群の場合と同じ  
+${f_3(x)}$をベースラインと考えて、$\frac{f_1(x)}{f_3(x)}$と$\frac{f_2(x)}{f_3(x)}$の尤度比を算出、尤度比が1を超えていれば$g_1$もしくは$g_2$と判別（尤度比の大きい方に群判別）、超えなければ$g_3$と判別する  
+群別の事前確率は各群の事前確率を$\pi_k$として設定する  
+$\pi_k>0, \quad k=1,2,\cdots,g \quad \sum\limits_{k=1}^{g}\pi_k=1$
+
+### 3群のLDAの実行  
+- 教科書の事例（wineデータ）  
+教科書p78の事例を行う（codeは適宜書き直した）  
+
+- 分析用のpackageを設定
+```{r message=FALSE, warning=FALSE}
+pkgs <- c("ggplot2", "skimr", "cowplot", "gridExtra")
+
+for(i in seq_along(pkgs)) {
+    if(!require(pkgs[[i]], character.only = TRUE)){
+        install.packages(pkgs[[i]], dependencies = TRUE)
+        library(pkgs[[i]], character.only = TRUE)
+    }
+}
+```
+
+- wineデータの取得と確認
+```{r}
+# UCI ML database からデータを取得
+url <- "http://archive.ics.uci.edu/ml/machine-learning-databases/wine/wine.data"
+Wine <- read.csv(url, header = FALSE)
+
+# 変数名を設定
+col_nm <- c(
+    "class",
+    "alcohol",
+    "malic_acid",
+    "ash",
+    "alcalinity_of_ash",
+    "magnesium",
+    "total_phenols",
+    "flavanoids",
+    "nonflavanoid_phenols",
+    "proanthocyanins",
+    "color_intensity",
+    "hue",
+    "od280/od315_of_diluted_wines",
+    "proline"
+)
+colnames(Wine) <- col_nm
+
+# データの確認（実際の分析は変数を絞って行う）
+Wine
+```
+
+- 使用データの加工と統計量  
+説明変数を2つに絞る（フラボノイド含有量, 色強度）  
+使用するデータの基本統計量を確認
+```{r message=FALSE, warning=FALSE}
+# 使用する3変数(品種, フラボノイド含有量, 色強度)を抽出
+wine <- Wine[, c(1, 8, 11)]
+
+# データの統計量を確認
+print(skim(wine))
+```
+
+- データの可視化
+```{r fig.width=6, fig.height=5}
+# 散布図
+ggplot(wine, aes(x = flavanoids, y = color_intensity, colour = factor(class))) +
+    geom_point() +
+    scale_colour_brewer(palette = "Set1") +
+    labs(title = "wineデータの確認(3群2変量)", color = "group") 
+```
+
+- 群別のサンプル数（3群178件）
+```{r}
+# 群別のサンプル数
+addmargins(table(wine$class))
+```
+
+- データ全体の相関
+```{r}
+# データ全体の相関
+cor(wine[, 2:3]) |> round(3)
+```
+
+- 群別の相関  
+```{r}
+# 群別の相関
+lapply(split(wine[, 2:3], wine[, "class"]), 
+       function(x) cor(x) |> round(3)) 
+```
+
+
+- データを訓練データとテストデータに分割  
+群別に指定した訓練データ比率のランダムサンプリングを行う（関数）
+```{r}
+train_test_split <- function(data, class_name = NA, train_perc = .5, seed = NA) {
+    # 多群データをグループ毎に指定の訓練データ比率で分割する
+    #
+    # data:データフレーム形式,グループカラム含む
+    # class_name:グループカラム名を指定
+    # train_perc:訓練データ比率
+    stopifnot(!is.na(class_name))
+    
+    data <- data[complete.cases(data), ] # 欠損データ除外
+    data_split <- split(data, data[class_name]) # グループ別に分割
+    n_list <- lapply(data_split, nrow) # グループ別のn数
+    
+    # グループ別に訓練データ比率に従ってサンプリング
+    if(!is.na(seed)) set.seed(seed)
+    samp_res <- lapply(seq_along(data_split), function(i) {
+        seq_len(n_list[[i]]) %in% sample(seq_len(n_list[[i]]), n_list[[i]]*train_perc)
+    })
+    train_vec <- unlist(samp_res) # training data == TRUE
+    
+    # train/testデータ 
+    return(
+        list(train = data[train_vec,],
+             test = data[!train_vec,],
+             train_perc = train_perc,
+             seed = seed)
+        )
+
+}
+
+train_test <- train_test_split(wine, class_name = "class", train_perc = .5, seed = 380) 
+wine_train <- train_test$train
+wine_test <- train_test$test
+
+```
+
+- 訓練データの群別件数
+```{r}
+addmargins(table(wine_train$class))
+```
+
+- 訓練データの基本統計量
+```{r}
+print(skim(wine_train))
+```
+
+- テストデータの群別件数
+```{r}
+addmargins(table(wine_test$class))
+```
+
+- テストデータの基本統計量  
+群別のサンプル数はほぼ同じ  
+`flavanoids`の分布がちょっと違う？  
+```{r}
+print(skim(wine_test))
+```
+
+- 訓練データとテストデータの確認  
+ランダムスプリットの結果  
+サンプル数少ないので厳しい
+```{r fig.height=6, fig.width=12, warning=FALSE}
+# 可視化
+p_train <- ggplot(wine_train, aes(x = flavanoids, y = color_intensity, colour = factor(class))) +
+    geom_point() +
+    scale_colour_brewer(palette = "Set1") +
+    labs(title = "wine訓練データ", color = "group") +
+    xlim(0, 6) + ylim(0, 14) +
+    theme(legend.position = c(.9, .8))
+p_test <- ggplot(wine_test, aes(x = flavanoids, y = color_intensity, colour = factor(class))) +
+    geom_point() +
+    scale_colour_brewer(palette = "Set1") +
+    labs(title = "wineテストデータ", color = "group") +
+    xlim(0, 6) + ylim(0, 14) +
+    theme(legend.position = c(.9, .8))
+
+plot_grid(p_train, p_test, label_size = 12, ncol = 2)
+```
+
+- 訓練データを使って多群対応のLDAを実行  
+3群以上のデータに対応する線形判別分析  
+```{r}
+# 多群対応のLDA
+mclass_LDA <- function(data, class_name) {
+    # data: classを含む分析対象データ
+    # class_name: data内のclassに相当する項目名
+    data <- data[complete.cases(data), ] # 欠損データ除外
+    X <- data[, !colnames(data) %in% class_name] # 説明変数行列
+    
+    # 統計量
+    g <- length(unique(data[[class_name]])) # 群の数
+    n <- nrow(data)-g
+    class_list <- split(X, data[[class_name]]) # 群別データ
+    class_S <- lapply(class_list, function(x) cov(x)) # 群別分散共分散行列
+    class_n <- lapply(class_list, function(x) nrow(x)-1) # 群別サンプル数
+    wgt_S <- Reduce("+", lapply(1:g, function(i) class_S[[i]]*class_n[[i]]))/n # 重み付きS
+    Sinv <- solve(wgt_S) # 共通S^-1
+    class_mu <- lapply(class_list, function(x) colMeans(x)) # 群別平均ベクトル
+    pi_k_vec <- as.data.frame(table(data[[class_name]]))[, 2]/length(data[[class_name]]) # 事前確率
+    
+    # 判別関数の計算
+    X <- data.matrix(X)
+    score_mat <- matrix(NA, nrow = nrow(X), ncol = g) # scoring結果格納用
+    ## 群の数に応じて判別境界を計算
+    for (i in seq_len(g-1)) {
+        a <- (class_mu[[i]] + class_mu[[g]])/2
+        b <- Sinv %*% (class_mu[[i]] - class_mu[[g]])
+        score_mat[, i] <- apply(X, 1, function(x) t(x)%*%b - t(a)%*%b + log(pi_k_vec[[i]]/pi_k_vec[[g]]))
+    }
+    score_mat[, g] <- 0 # ベースラインクラスのスコア==0
+    class_vec <- apply(score_mat, 1, which.max) # 判別クラスの決定
+    
+    # 結果の格納
+    return(list(score_mat = score_mat, 
+                class_vec = as.vector(class_vec),
+                g = g,
+                Sinv = Sinv,
+                class_mu = class_mu,
+                pi_k_vec = pi_k_vec))
+    
+}
+# LDAの実行
+res_LDA <- mclass_LDA(wine_train, "class")
+
+```
+
+- LDA判別結果
+```{r}
+# 判別結果
+table(wine_train[, "class"], res_LDA$class_vec)
+```
+
+- LDA判別精度
+```{r}
+cnt_tbl <- as.data.frame.matrix(table(wine_train[, "class"], res_LDA$class_vec))
+
+# 誤判別確率
+lda_train_err <- mean(wine_train[, "class"] != res_LDA$class_vec) |> round(3)
+lda_train_err
+```
+
+- テストデータを使って汎化性能を確認  
+mclass_LDA関数用の予測用関数  
+```{r}
+# LDAによる予測
+predict_mclass_LDA <- function(result, data) {
+    # result:mclass_LDA関数の結果object 
+    # data:説明変数行列（class は含まない）
+    
+    # resultからの群別統計量
+    g <- result$g
+    Sinv <- result$Sinv
+    class_mu <- result$class_mu
+    pi_k_vec <- result$pi_k_vec
+    
+    stopifnot(ncol(Sinv) == ncol(data))
+    # 判別関数の計算
+    X <- data.matrix(data)
+    score_mat <- matrix(NA, nrow = nrow(X), ncol = g) # scoring結果格納用
+    ## 群の数に応じて判別境界を計算
+    for (i in seq_len(g-1)) {
+        a <- (class_mu[[i]] + class_mu[[g]])/2
+        b <- Sinv %*% (class_mu[[i]] - class_mu[[g]])
+        score_mat[, i] <- apply(X, 1, function(x) t(x)%*%b - t(a)%*%b + log(pi_k_vec[[i]]/pi_k_vec[[g]]))
+    }
+    score_mat[, g] <- 0 # ベースラインクラスのスコア==0
+    class_vec <- apply(score_mat, 1, which.max) # 判別クラスの決定
+    # 結果の格納
+    return(list(score_mat = score_mat, 
+                class_vec = as.vector(class_vec)))
+}
+# テストデータにLDA実行
+pred_LDA <- predict_mclass_LDA(res_LDA, wine_test[, -1])
+
+```
+
+- テストデータへのLDA判別結果
+```{r}
+# 判別結果
+table(wine_test[, "class"], pred_LDA$class_vec)
+```
+
+- テストデータへのLDA判別精度
+```{r}
+cnt_tbl <- as.data.frame.matrix(table(wine_test[, "class"], pred_LDA$class_vec))
+
+# 誤判別確率
+lda_test_err <- mean(wine_test[, "class"] != pred_LDA$class_vec) |> round(3)
+lda_test_err
+```
+
+- 訓練/テストデータへのLDA判別結果の確認
+```{r fig.height=5, fig.width=10, message=FALSE, warning=FALSE}
+# scoring grid
+xp <- seq(0, 6, length.out = 300)
+yp <- seq(0, 14, length.out = 700)
+grid_plot <- expand.grid(X1 = xp, X2 = yp)
+
+# predict LDA
+grid_plot$lda_score <- predict_mclass_LDA(res_LDA, grid_plot[, 1:2])$class
+
+# 可視化
+p_train_lda <- ggplot() + 
+    geom_point(data = wine_train, aes(flavanoids, color_intensity, color = factor(class))) +
+    # labs(title = "LDAによる判別境界", color = "group") +
+    scale_colour_brewer(palette = "Set1") +
+    labs(title = paste0("wine訓練データ　", "誤判別率=", lda_train_err), color = "group") +
+    xlim(0, 6) + ylim(0, 14) +
+    theme(legend.position = c(.9, .8)) +
+    geom_contour(data = grid_plot, aes(X1, X2, z = lda_score), col = "gray")
+
+p_test_lda <- ggplot() +
+    geom_point(data = wine_test, aes(flavanoids, color_intensity, color = factor(class))) +
+    # labs(title = "LDAによる判別境界", color = "group") +
+    scale_colour_brewer(palette = "Set1") +
+    labs(title = paste0("wineテストデータ　", "誤判別率=", lda_test_err), color = "group") +
+    xlim(0, 6) + ylim(0, 14) +
+    theme(legend.position = c(.9, .8)) +
+    geom_contour(data = grid_plot, aes(X1, X2, z = lda_score), col = "gray")
+
+plot_grid(p_train_lda, p_test_lda, label_size = 12, ncol = 2)
+
+
+```
+
+### 3群のQDAの実行  
+教科書p82の事例を行う（codeは適宜書き直した）  
+
+- 訓練データを使って多群対応のQDAを実行  
+3群以上のデータに対応する2次判別分析  
+```{r}
+# 多群対応のQDA
+mclass_QDA <- function(data, class_name) {
+    # data: classを含む分析対象データ
+    # class_name: data内のclassに相当する項目名
+    data <- data[complete.cases(data), ] # 欠損データ除外
+    X <- data[, !colnames(data) %in% class_name] # 説明変数行列
+    
+    # 群別統計量
+    g <- length(unique(data[[class_name]])) # 群の数
+    pi_k_vec <- as.data.frame(table(data[[class_name]]))[, 2]/length(data[[class_name]]) # 事前確率
+    class_list <- split(X, data[[class_name]]) # 群別データ分割
+    class_mu <- lapply(class_list, function(x) colMeans(x)) # 群別平均
+    class_Sinv <- lapply(class_list, function(x) solve(cov(x))) # 群別S^-1
+    class_det <- lapply(class_list, function(x) det(cov(x))) # 群別det
+    
+    # 判別関数の計算
+    X <- data.matrix(X)
+    score_mat <- matrix(NA, nrow = nrow(X), ncol = g) # scoring結果格納用
+    ## 群の数に応じて判別境界を計算
+    for (i in seq_len(g-1)) {
+        d_1 <- rowSums(sweep(X, 2, class_mu[[i]]) %*% class_Sinv[[i]] * sweep(X, 2, class_mu[[i]]))
+        d_2 <- rowSums(sweep(X, 2, class_mu[[g]]) %*% class_Sinv[[g]] * sweep(X, 2, class_mu[[g]]))
+        diff_d <- d_2-d_1
+        score_mat[, i] <- log(sqrt(class_det[[g]]/class_det[[i]])) + (diff_d)/2 + log(pi_k_vec[[i]]/pi_k_vec[[g]])
+    }
+    score_mat[, g] <- 0 # ベースラインクラスのスコア==0
+    class_vec <- apply(score_mat, 1, which.max) # 判別クラスの決定
+    
+    # 結果の格納
+    return(list(score_mat = score_mat,
+                class_vec = as.vector(class_vec),
+                class_mu = class_mu,
+                class_Sinv = class_Sinv,
+                class_det = class_det,
+                g = g,
+                pi_k_vec = pi_k_vec))
+}
+
+# QDAの実行
+res_QDA <- mclass_QDA(wine_train, "class")
+
+```
+
+- QDA判別結果
+```{r}
+# 判別結果
+table(wine_train[, "class"], res_QDA$class_vec)
+```
+
+- QDA判別精度
+```{r}
+cnt_tbl <- as.data.frame.matrix(table(wine_train[, "class"], res_QDA$class_vec))
+
+# 誤判別確率
+qda_train_err <- mean(wine_train[, "class"] != res_QDA$class_vec) |> round(3)
+qda_train_err
+```
+- テストデータを使って汎化性能を確認  
+mclass_QDA関数用の予測用関数  
+```{r}
+# QDAによる予測
+predict_mclass_QDA <- function(result, data) {
+    # result:mclass_QDA関数の結果object 
+    # data:説明変数行列（class は含まない）
+    
+    # resultからの群別統計量
+    g <- result$g
+    class_Sinv <- result$class_Sinv
+    class_mu <- result$class_mu
+    class_det <- result$class_det
+    pi_k_vec <- result$pi_k_vec
+    
+    stopifnot( all(sapply(class_Sinv, function(i) ncol(i) == ncol(data))) )
+    # 判別関数の計算
+    X <- data.matrix(data)
+    score_mat <- matrix(NA, nrow = nrow(X), ncol = g) # scoring結果格納用
+     for (i in seq_len(g-1)) {
+        d_1 <- rowSums(sweep(X, 2, class_mu[[i]]) %*% class_Sinv[[i]] * sweep(X, 2, class_mu[[i]]))
+        d_2 <- rowSums(sweep(X, 2, class_mu[[g]]) %*% class_Sinv[[g]] * sweep(X, 2, class_mu[[g]]))
+        diff_d <- d_2-d_1
+        score_mat[, i] <- log(sqrt(class_det[[g]]/class_det[[i]])) + (diff_d)/2 + log(pi_k_vec[[i]]/pi_k_vec[[g]])
+    }
+    score_mat[, g] <- 0 # ベースラインクラスのスコア==0
+    class_vec <- apply(score_mat, 1, which.max) # 判別クラスの決定
+    # 結果の格納
+    return(list(score_mat = score_mat, 
+                class_vec = as.vector(class_vec)))
+}
+# テストデータにQDA実行
+pred_QDA <- predict_mclass_QDA(res_QDA, wine_test[, -1])
+```
+
+- QDA判別結果
+```{r}
+# 判別結果
+table(wine_test[, "class"], pred_QDA$class)
+```
+
+- QDA判別精度
+```{r}
+cnt_tbl <- as.data.frame.matrix(table(wine_test[, "class"], pred_QDA$class))
+# 誤判別確率
+qda_test_err <- mean(wine_test[, "class"] != pred_QDA$class_vec) |> round(3)
+qda_test_err
+```
+
+- 訓練/テストデータへのQDA判別結果の確認  
+判別境界は曲線となる  
+誤判別率は訓練/テストデータともにLDAに比べて低下  
+
+```{r fig.height=5, fig.width=10, message=FALSE, warning=FALSE}
+# predict QDA
+grid_plot$qda_score <- predict_mclass_QDA(res_QDA, grid_plot[, 1:2])$class
+
+# 可視化
+p_train_qda <- ggplot() + 
+    geom_point(data = wine_train, aes(flavanoids, color_intensity, color = factor(class))) +
+    # labs(title = "LDAによる判別境界", color = "group") +
+    scale_colour_brewer(palette = "Set1") +
+    labs(title = paste0("wine訓練データ　", "誤判別率=", qda_train_err), color = "group") +
+    xlim(0, 6) + ylim(0, 14) +
+    theme(legend.position = c(.9, .8)) +
+    geom_contour(data = grid_plot, aes(X1, X2, z = qda_score), col = "gray")
+
+p_test_qda <- ggplot() +
+    geom_point(data = wine_test, aes(flavanoids, color_intensity, color = factor(class))) +
+    # labs(title = "LDAによる判別境界", color = "group") +
+    scale_colour_brewer(palette = "Set1") +
+    labs(title = paste0("wineテストデータ　", "誤判別率=", qda_test_err), color = "group") +
+    xlim(0, 6) + ylim(0, 14) +
+    theme(legend.position = c(.9, .8)) +
+    geom_contour(data = grid_plot, aes(X1, X2, z = qda_score), col = "gray")
+
+plot_grid(p_train_qda, p_test_qda, label_size = 12, ncol = 2)
+
+
+```
+
+### 結果の比較（訓練/テストデータの誤判別率）
+- 誤判別率  
+LDAよりもQDAの誤判別率が低い  
+一般的に訓練データの誤判別率は低く、テストデータで悪化する  
+LDAはテストデータの誤判別率が訓練データより良くなった  
+QDAも誤判別の件数だけ見れば1件しか違わない（6件→7件）  
+精度をみるにはサンプルが少なすぎるかもしれない  
+
+```{r}
+# LDA/QDA 誤判別率
+data.frame(train = c(lda_train_err, qda_train_err),
+           test = c(lda_test_err, qda_test_err),
+           row.names = c("LDA", "QDA"))
+
+```
+
+### 多変量データへの適用（参考）  
+- Wine全データへの適用  
+上記検証では2変数（フラボノイド含有量, 色強度）のみで3群の判別を行った  
+元データの持つ全変数（14変数）を使った場合の検証を行う  
+
+- Wine全変数を使ったLDA
+```{r}
+# 訓練データとテストデータ分割
+train_test_Wine <- train_test_split(Wine, "class", train_perc = .5, seed = 123)
+
+# LDAによる判別分析（Wineデータ全変数）
+## 訓練データによるモデルフィット
+res_LDA_Wine <- mclass_LDA(train_test_Wine$train, "class")
+## 訓練データのフィッティング 
+table(train_test_Wine$train[["class"]], res_LDA_Wine$class_vec)
+lda_train_err2 <- mean(train_test_Wine$train[["class"]] != res_LDA_Wine$class_vec) |> round(3)
+
+```
+
+- LDAのテストデータへの適用
+```{r}
+## テストデータによる予測
+pred_LDA_Wine <- predict_mclass_LDA(res_LDA_Wine, train_test_Wine$test[, -1])
+## テストデーによる予測結果
+table(train_test_Wine$test[, "class"], pred_LDA_Wine$class_vec)
+lda_test_err2 <- mean(train_test_Wine$test[, "class"] != pred_LDA_Wine$class_vec) |> round(3)
+
+```
+
+- Wine全変数を使ったQDA
+```{r}
+# QDAによる判別分析（Wineデータ全変数）
+## 訓練データによるモデルフィット
+res_QDA_Wine <- mclass_QDA(train_test_Wine$train, "class")
+## 訓練データのフィッティング 
+table(train_test_Wine$train[["class"]], res_QDA_Wine$class_vec)
+qda_train_err2 <- mean(train_test_Wine$train[["class"]] != res_QDA_Wine$class_vec) |> round(3)
+
+```
+
+- QDAのテストデータへの適用
+```{r}
+## テストデータによる予測
+pred_QDA_Wine <- predict_mclass_QDA(res_QDA_Wine, train_test_Wine$test[, -1])
+## テストデーによる予測結果
+table(train_test_Wine$test[, "class"], pred_QDA_Wine$class_vec)
+qda_test_err2 <- mean(train_test_Wine$test[, "class"] != pred_QDA_Wine$class_vec) |> round(3)
+
+```
+
+- 誤判別率  
+多変数にしてもLDAよりもQDAの誤判別率が低い  
+訓練データは誤判別率0％  
+テストデータの誤判別も極めて少ない  
+サンプル数や群の数がより多い、判別の難しいデータで他の手法と比較して特性を確認した方が良いかも
+
+```{r}
+# LDA/QDA 誤判別率
+data.frame(train = c(lda_train_err2, qda_train_err2),
+           test = c(lda_test_err2, qda_test_err2),
+           row.names = c("LDA", "QDA"))
+```
+
+### 2.1章～2.3章へ戻る
+[2.1章~2.3章 2群の場合のベイズ判別法](https://tarohgotoh.github.io/DS-Study/)
