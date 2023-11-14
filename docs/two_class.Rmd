@@ -1,0 +1,372 @@
+---
+title: "スパース回帰分析とパターン認識"
+author: "後藤太郎"
+date: "2023-11-16"
+output:
+  html_document:
+    toc: true
+    df_print: paged
+    # code_folding: hide
+    theme:
+      version: 4 
+      base_font:
+        google: "Quicksand"
+      heading_font:
+        google: "Quicksand"
+      code_font: 
+        google: "Source Code Pro"
+      #font_scale: 1.2
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_chunk$set(dev = "ragg_png")
+par(family = "Noto Sans CJK JP")
+ggplot2::theme_set(ggplot2::theme_bw() + ggplot2::theme(text = ggplot2::element_text(family = "Noto Sans CJK JP")))
+```
+
+## 第2章 統計手法によるパターン認識（2.1章～2.3章）
+### 2群の多変量正規分布による判別
+- マハラノビス距離と判別分析  
+マハラノビス研究会報告6.3章（p36-p40）において報告（ link:[マハラノビス研究会報告](https://www.jmra-net.or.jp/Portals/0/committee/innovation/20230414_001.pdf)）  
+汎距離の7分類のうち、ケース5が線形判別分析、ケース6が2次判別分析に相当  
+
+| ケース | 汎距離の定義                        | 群の数       | 平均   | 分散共分散行列 | 
+| :----- | ----------------------------------- | ------------ | ------ | -------------- | 
+| 1      | 母平均からサンプルまでの距離        | 1            | 母平均 | 母分散         | 
+| 2      | 群平均からサンプルまでの距離        | 1            | 群平均 | 標本分散       | 
+| 3      | 2群の平均間の距離                   | 2            | 群平均 | 2群で共通      | 
+| 4      | 異なるSを持つ2群の平均間の距離      | 2            | 群平均 | 2群で異なる    | 
+| 5      | 多群の群平均とサンプルとの距離      | 多群（G>=2） | 群平均 | 群間で共通     | 
+| 6      | 異なるSを持つ多群のサンプルとの距離 | 多群（G>=2） | 群平均 | 群間で異なる   | 
+| 7      | 空間の任意の2サンプル間の距離       | -            | -      | 標本分散       | 
+
+
+### ケース5のマハラノビス距離を使用した場合  
+- 線形判別関数  
+2群の観測データ$x$について、$f_1(x)$と$f_2(x)$をパラメータ$\mu_1,\mu_2,\sum$の尤度として尤度比をとると
+$$
+\begin{eqnarray}
+\frac{f_1(x)}{f_2(x)} 
+&=& \exp[{-\frac{1}{2}(x-\mu_1)'\Sigma^{-1}(x-\mu_1)+\frac{1}{2}(x-\mu_1)'\Sigma^{-1}(x-\mu_1)}] 
+\\&=& \exp[\mathbf x' \Sigma^{-1}(\mu_1-\mu_2)-\frac{1}{2}(\mu_1+\mu_2)'\Sigma^{-1}(\mu_1-\mu_2)]
+\\&=& \exp[\mathbf x' \mathbf b-\mathbf a'\mathbf b]  
+\end{eqnarray}
+$$
+要約した$a$と$b$は、
+$a=\frac{1}{2}(\mu_1+\mu_2), b=\Sigma^{-1}(\mu_1-\mu_2)$  
+対数をとると線形判別関数となる  
+$h(x)=\mathbf x' \mathbf b-\mathbf a'\mathbf b$  
+※教科書p69の式(2.2)  
+
+- 群サイズの情報（事前確率）を追加    
+群1の出現確率を$\theta$とすれば群2の出現確率は$1-\theta$  
+群1へ所属する場合、  
+$f_1(x)\theta>f_2(x)(1-\theta) \\ \frac{f_1(x)\theta}{f_2(x)(1-\theta)}>1$  
+左辺対数をとって、  
+$Q=\log\frac{f_1(x)}{f_2(x)} + \log\frac{\theta}{1-\theta}$  
+※教科書p69の式(2.3)(2.4)式の$c$   
+
+- 群共通の分散共分散行列  
+群別の分散共分散行列にサンプル数でウェイト付けして算出したものを使う（2群の場合）  
+$\displaystyle \boldsymbol{S}=\frac{1}{n_1+n_2-2}((n_1-1)\boldsymbol{S}_1+(n_2-1)\boldsymbol{S}_2)$  
+参考）[永田・棟近（2001）多変量解析入門 サイエンス社](https://www.amazon.co.jp/%E5%A4%9A%E5%A4%89%E9%87%8F%E8%A7%A3%E6%9E%90%E6%B3%95%E5%85%A5%E9%96%80-%E3%83%A9%E3%82%A4%E3%83%96%E3%83%A9%E3%83%AA%E6%96%B0%E6%95%B0%E5%AD%A6%E5%A4%A7%E7%B3%BB-%E6%B0%B8%E7%94%B0-%E9%9D%96/dp/4781909809) p111-p112
+
+### ケース6のマハラノビス距離を使用した場合  
+- 2次判別関数  
+分散共分散行列が群毎に異なる場合  
+$$
+\begin{eqnarray}
+\displaystyle
+\frac{f_1(x)}{f_2(x)} 
+&=& \frac{|S_{1}|^{-\frac{1}{2}}}{|S_{2}|^{-\frac{1}{2}}} \displaystyle\exp[{-\frac{1}{2}(x-m_1)'S^{-1}_{1}(x-m_1)+\frac{1}{2}(x-m_1)'S^{-1}_{2}(x-m_1)}] 
+\\&=& \sqrt \frac{|S_{2}|}{|S_{1}|} \exp [ \frac{1}{2} \left\{ D^2(x,m_2|g_2)-D^2(x,m_1|g_1) \right\} ]
+\end{eqnarray}
+$$
+群サイズの情報を追加  
+$\displaystyle Q=\log\sqrt \frac{|S_{2}|}{|S_{1}|} + \frac{1}{2} \left\{ D^2(x,m_2|g_2)-D^2(x,m_1|g_1) \right\} + \log\frac{\theta}{1-\theta}$  
+※教科書p72の式(2.7)    
+
+### 線形判別関数によるLDAの実行  
+2群のサンプルデータを作成してケース5およびケース6のマハラノビス距離を使った判別分析を実行してみる  
+
+- 分析用のpackageを設定
+```{r message=FALSE, warning=FALSE}
+pkgs <- c("ggplot2", "skimr", "cowplot", "gridExtra")
+
+for(i in seq_along(pkgs)) {
+    if(!require(pkgs[[i]], character.only = TRUE)){
+        install.packages(pkgs[[i]], dependencies = TRUE)
+        library(pkgs[[i]], character.only = TRUE)
+    }
+}
+```
+
+- サンプルデータ（2群2変量）を作成  
+```{r}
+# テスト用のデータ作成
+## グループ1データ
+set.seed(1234)
+g1 <- matrix(rnorm(600), ncol = 2)
+Cor_g1 <- matrix(c(1, .9, .9, 1), 2, 2) 
+L_g1 <- chol(Cor_g1)
+g1 <- g1 %*% L_g1
+g1 <- round(sweep(g1, 2, c(20, 25), "*"))
+g1 <- round(sweep(g1, 2, c(60, 100), "+"))
+
+## グループ2データ
+g2 <- matrix(rnorm(400), ncol = 2)
+Cor_g2 <- matrix(c(1, -.8, -.8, 1), 2, 2)
+L_g2 <- chol(Cor_g2)
+g2 <- g2 %*% L_g2
+g2 <- round(sweep(g2, 2, c(10, 15), "*"))
+g2 <- round(sweep(g2, 2, c(75, 55), "+"))
+
+## 両グループを結合
+two_class_samp <- data.frame(
+    rbind(g1, g2),
+    class = c(rep("group_1", nrow(g1)), rep("group_2", nrow(g2)))
+)
+
+two_class_samp
+```
+
+- 群別のサンプル数
+```{r}
+# 群絵別のサンプル数
+table(two_class_samp$class)
+```
+
+- データ全体の相関
+```{r}
+# データ全体の相関
+cor(two_class_samp[, c("X1", "X2")]) |> round(3)
+```
+
+- 群別の相関  
+```{r}
+# 群別の相関
+lapply(split(two_class_samp[, c("X1", "X2")], two_class_samp[, "class"]), 
+       function(x) cor(x) |> round(3)) 
+```
+
+- 基本統計量の確認
+```{r}
+print(skim(two_class_samp))
+```
+
+- データの可視化
+```{r fig.width=6, fig.height=5}
+# 可視化
+two_class_samp |>
+    ggplot(aes(x = X1, y = X2, color = factor(class))) +
+    geom_point() +
+    labs(title = "サンプルデータの確認(2群2変量)", color = "group") + 
+    scale_color_manual(values = c("gray40", "tomato")) 
+```
+
+- サンプルデータで線形判別関数によるLDAを実行
+```{r}
+# 2群のLDA
+two_class_lda <- function(data, class) {
+    # data: 説明変数行列（class は含まない）
+    # class: 分類クラスベクトル（2群）
+    
+    stopifnot(length(unique(class)) == 2)
+    # 統計量
+    n <- nrow(data)-2 # サンプル数
+    two_class_list <- split(data, class) # 群別データ 
+    two_class_S <- lapply(two_class_list, function(x) cov(x)) # 群別分散共分散行列
+    two_class_n <- lapply(two_class_list, function(x) nrow(x)-1) # 群別サンプル数
+    wgt_S <- Reduce("+", lapply(1:2, function(i) two_class_S[[i]]*two_class_n[[i]]/n)) # 重み付きS
+    Sinv <- solve(wgt_S) # 共通S^-1
+    two_class_mu <- lapply(two_class_list, function(x) colMeans(x)) # 群別の平均
+    theta <- two_class_n[[1]]/nrow(data) # 所属確率
+    # 判別関数の計算
+    X <- data.matrix(data)
+    a <- (two_class_mu[[1]] + two_class_mu[[2]])/2
+    b <- Sinv %*% (two_class_mu[[1]] - two_class_mu[[2]])
+    score <- apply(X, 1, function(x) t(x)%*%b - t(a)%*%b + log(theta/(1-theta)))
+    # 判別結果の分類
+    class <- ifelse(score >= 0, "group_1", "group_2")
+    # 結果の格納
+    return(list(score = as.vector(score), 
+                class = as.vector(class),
+                Sinv = Sinv,
+                two_class_mu = two_class_mu,
+                theta = theta))
+}
+# LDAの実行
+res_lda <- two_class_lda(two_class_samp[, c("X1", "X2")], two_class_samp[, "class"])
+
+```
+
+- LDA判別結果
+```{r}
+# 判別結果
+table(two_class_samp[, "class"], res_lda$class)
+```
+
+- LDA判別精度
+```{r}
+cnt_tbl <- as.data.frame.matrix(table(two_class_samp[, "class"], res_lda$class))
+
+# 誤判別率
+lda_err <- 1-sum(diag(as.matrix(cnt_tbl)))/sum(cnt_tbl) |> round(3)
+lda_err
+```
+
+- LDA判別境界の確認
+```{r fig.width=5, fig.height=5}
+# LDAによる予測
+predict_two_class_lda <- function(result, data) {
+    # result:two_class_lda関数の結果object 
+    # data:説明変数行列（class は含まない）
+    
+    # resultからの群別統計量
+    Sinv <- result$Sinv
+    two_class_mu <- result$two_class_mu
+    theta <- result$theta
+    
+    stopifnot(ncol(Sinv) == ncol(data))
+    # 判別関数の計算
+    X <- data.matrix(data)
+    a <- (two_class_mu[[1]] + two_class_mu[[2]])/2
+    b <- Sinv %*% (two_class_mu[[1]] - two_class_mu[[2]])
+    score <- apply(X, 1, function(x) t(x)%*%b - t(a)%*%b + log(theta/(1-theta)))
+    # 判別結果の分類
+    class <- ifelse(score >= 0, "group_1", "group_2")
+    # 結果の格納
+    return(list(score = as.vector(score), 
+                class = as.vector(class)))
+}
+
+# scoring grid
+data_rng <- apply(two_class_samp[, c("X1", "X2")], 2, range)
+xp <- seq(data_rng[1, 1], data_rng[2, 1], length.out = 100)
+yp <- seq(data_rng[1, 2], data_rng[2, 2], length.out = 100)
+grid_plot <- expand.grid(X1 = xp, X2 = yp)
+
+# predict LDA
+grid_plot$lda_score <- predict_two_class_lda(res_lda, grid_plot[, 1:2])$score
+
+# 判別境界
+p_lda <- ggplot() + 
+    geom_point(data = two_class_samp, aes(X1, X2, color = class)) +
+    labs(title = paste("LDAによる判別境界", "誤判別率=", lda_err), color = "group") +
+    scale_color_manual(values = c("gray40", "tomato")) +
+    theme(legend.position = c(.2, .8)) +
+    geom_contour(data = grid_plot, aes(X1, X2, z = lda_score), breaks = 0, col = "dodgerblue")
+print(p_lda)
+
+```
+
+
+### 2次判別関数によるQDAの実行
+- サンプルデータで線形判別関数によるQDAを実行
+```{r}
+# 2群のQDA
+two_class_qda <- function(data, class) {
+    # data: 説明変数行列（class は含まない）
+    # class: 分類クラスベクトル（2群）
+    
+    # 群別統計量
+    two_class_list <- split(data, class)
+    two_class_mu <- lapply(two_class_list, function(x) colMeans(x)) # 2群の平均
+    two_class_Sinv <- lapply(two_class_list, function(x) solve(cov(x))) # 2群の分散共分散行列
+    two_class_det <- lapply(two_class_list, function(x) det(cov(x))) # 2群の行列式
+    two_class_n <- lapply(two_class_list, nrow) # 2群のサンプル数
+    theta <- two_class_n[[1]]/nrow(data) # 群1の所属確率
+    # 判別関数の計算
+    X <- data.matrix(data)
+    d_1 <- rowSums(sweep(X, 2, two_class_mu[[1]]) %*% two_class_Sinv[[1]] * sweep(X, 2, two_class_mu[[1]]))
+    d_2 <- rowSums(sweep(X, 2, two_class_mu[[2]]) %*% two_class_Sinv[[2]] * sweep(X, 2, two_class_mu[[2]]))
+    diff_d <- d_2-d_1
+    score <- log(sqrt(two_class_det[[2]]/two_class_det[[1]])) + diff_d/2 + log(theta/(1-theta))
+    # 判別結果の分類
+    class <- ifelse(score >= 0, "group_1", "group_2")
+    # 結果の格納
+    return(list(score = score,
+                class = class,
+                two_class_mu = two_class_mu,
+                two_class_Sinv = two_class_Sinv,
+                two_class_det = two_class_det,
+                theta = theta))
+}
+# QDAの実行
+res_qda <- two_class_qda(two_class_samp[, c("X1", "X2")], two_class_samp[, "class"])
+
+```
+
+- QDA判別結果
+```{r}
+# 判別結果
+table(two_class_samp[, "class"], res_qda$class)
+```
+
+- QDA判別精度
+```{r}
+cnt_tbl <- as.data.frame.matrix(table(two_class_samp[, "class"], res_qda$class))
+# 誤判別率
+qda_err <- 1-sum(diag(as.matrix(cnt_tbl)))/sum(cnt_tbl) |> round(3)
+qda_err
+```
+
+- QDA判別境界の確認
+```{r fig.width=5, fig.height=5}
+# QDAによる予測
+predict_two_class_qda <- function(result, data) {
+    # result:two_class_qda関数の結果object 
+    # data:説明変数行列（class は含まない）
+    
+    # resultからの群別統計量
+    two_class_Sinv <- result$two_class_Sinv
+    two_class_mu <- result$two_class_mu
+    two_class_det <- result$two_class_det
+    theta <- result$theta
+    
+    stopifnot( all(sapply(two_class_Sinv, function(i) ncol(i) == ncol(data))) )
+    # 判別関数の計算
+    X <- data.matrix(data)
+    d_1 <- rowSums(sweep(X, 2, two_class_mu[[1]]) %*% two_class_Sinv[[1]] *
+                       sweep(X, 2, two_class_mu[[1]]))
+    d_2 <- rowSums(sweep(X, 2, two_class_mu[[2]]) %*% two_class_Sinv[[2]] *
+                       sweep(X, 2, two_class_mu[[2]]))
+    diff_d <- d_2-d_1
+    score <- log(sqrt(two_class_det[[2]]/two_class_det[[1]])) + 1/2*(diff_d) + log(theta/(1-theta))
+    # 判別結果の分類
+    class <- ifelse(score >= 0, "group_1", "group_2")
+    # 結果の格納
+    return(list(score = as.vector(score), 
+                class = as.vector(class)))
+}
+
+# predict QDA
+grid_plot$qda_score <- predict_two_class_qda(res_qda, grid_plot[, c("X1", "X2")])$score
+
+# 判別境界
+p_qda <- ggplot() + 
+    geom_point(data = two_class_samp, aes(X1, X2, color = class)) +
+    labs(title = paste("QDAによる判別境界", "誤判別率=", qda_err), color = "group") +
+    scale_color_manual(values = c("gray40", "tomato")) +
+    theme(legend.position = c(.2, .8)) +
+    geom_contour(data = grid_plot, aes(X1, X2, z = qda_score), breaks = 0, col = "dodgerblue")
+print(p_qda)
+
+```
+
+### 結果の比較（判別境界と精度）
+LDAは判別境界が直線、QDAは曲線  
+サンプルデータに関しては精度はQDAの方が良い  
+判別の目的によってはLDAの方が都合が良い場合あり？  
+
+```{r fig.height=6, fig.width=12, warning=FALSE}
+p1 <- ggdraw(p_lda) + draw_grob(tableGrob(table(two_class_samp[, "class"], res_lda$class)), 
+                          x = .2, y = .35)
+p2 <- ggdraw(p_qda) + draw_grob(tableGrob(table(two_class_samp[, "class"], res_qda$class)), 
+                          x = .2, y = .35)
+plot_grid(p1, p2, label_size = 12, ncol = 2)
+
+```
+
+
