@@ -328,12 +328,10 @@ predict_two_class_qda <- function(result, data) {
     stopifnot( all(sapply(two_class_Sinv, function(i) ncol(i) == ncol(data))) )
     # 判別関数の計算
     X <- data.matrix(data)
-    d_1 <- rowSums(sweep(X, 2, two_class_mu[[1]]) %*% two_class_Sinv[[1]] *
-                       sweep(X, 2, two_class_mu[[1]]))
-    d_2 <- rowSums(sweep(X, 2, two_class_mu[[2]]) %*% two_class_Sinv[[2]] *
-                       sweep(X, 2, two_class_mu[[2]]))
+    d_1 <- rowSums(sweep(X, 2, two_class_mu[[1]]) %*% two_class_Sinv[[1]] * sweep(X, 2, two_class_mu[[1]]))
+    d_2 <- rowSums(sweep(X, 2, two_class_mu[[2]]) %*% two_class_Sinv[[2]] * sweep(X, 2, two_class_mu[[2]]))
     diff_d <- d_2-d_1
-    score <- log(sqrt(two_class_det[[2]]/two_class_det[[1]])) + 1/2*(diff_d) + log(theta/(1-theta))
+    score <- log(sqrt(two_class_det[[2]]/two_class_det[[1]])) + diff_d/2 + log(theta/(1-theta))
     # 判別結果の分類
     class <- ifelse(score >= 0, "group_1", "group_2")
     # 結果の格納
