@@ -370,4 +370,4 @@ plot_grid(p1, p2, label_size = 12, ncol = 2)
 ```
 
 ### 2.4章へ続く
-[2.4章 多群の場合のベイズ判別法](./docs/ds_ch24.html)
+[2.4章 多群の場合のベイズ判別法](ds_ch24.html)
