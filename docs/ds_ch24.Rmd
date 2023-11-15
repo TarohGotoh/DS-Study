@@ -179,7 +179,7 @@ print(skim(wine_test))
 
 - 訓練データとテストデータの確認  
 ランダムスプリットの結果  
-サンプル数少ないので厳しい
+サンプル数少ないので厳しい？
 ```{r fig.height=6, fig.width=12, warning=FALSE}
 # 可視化
 p_train <- ggplot(wine_train, aes(x = flavanoids, y = color_intensity, colour = factor(class))) +
@@ -210,22 +210,24 @@ mclass_LDA <- function(data, class_name) {
     
     # 統計量
     g <- length(unique(data[[class_name]])) # 群の数
-    n <- nrow(data)-g
-    class_list <- split(X, data[[class_name]]) # 群別データ
-    class_S <- lapply(class_list, function(x) cov(x)) # 群別分散共分散行列
-    class_n <- lapply(class_list, function(x) nrow(x)-1) # 群別サンプル数
-    wgt_S <- Reduce("+", lapply(1:g, function(i) class_S[[i]]*class_n[[i]]))/n # 重み付きS
-    Sinv <- solve(wgt_S) # 共通S^-1
-    class_mu <- lapply(class_list, function(x) colMeans(x)) # 群別平均ベクトル
     pi_k_vec <- as.data.frame(table(data[[class_name]]))[, 2]/length(data[[class_name]]) # 事前確率
+    n <- nrow(data)-g # 全体サンプル数
+    mclass_data <- split(X, data[[class_name]]) # 群別データ
+    mclass_n <- lapply(mclass_data, function(x) nrow(x)-1) # 群別サンプル数
+    mclass_mu <- lapply(mclass_data, function(x) colMeans(x)) # 群別平均ベクトル
+    mclass_data_cent <- lapply(seq_along(mclass_data), # 平均偏差データ
+                                  function(i) sweep(mclass_data[[i]], 2, mclass_mu[[i]])) 
+    mclass_S <- lapply(mclass_data_cent, function(x) cov(x)) # 群別分散共分散行列
+    wgt_S <- Reduce("+", lapply(1:g, function(i) mclass_S[[i]]*mclass_n[[i]]))/n # 重み付きS
+    Sinv <- solve(wgt_S) # 共通S^-1
     
     # 判別関数の計算
     X <- data.matrix(X)
     score_mat <- matrix(NA, nrow = nrow(X), ncol = g) # scoring結果格納用
     ## 群の数に応じて判別境界を計算
     for (i in seq_len(g-1)) {
-        a <- (class_mu[[i]] + class_mu[[g]])/2
-        b <- Sinv %*% (class_mu[[i]] - class_mu[[g]])
+        a <- (mclass_mu[[i]] + mclass_mu[[g]])/2
+        b <- Sinv %*% (mclass_mu[[i]] - mclass_mu[[g]])
         score_mat[, i] <- apply(X, 1, function(x) t(x)%*%b - t(a)%*%b + log(pi_k_vec[[i]]/pi_k_vec[[g]]))
     }
     score_mat[, g] <- 0 # ベースラインクラスのスコア==0
@@ -236,7 +238,7 @@ mclass_LDA <- function(data, class_name) {
                 class_vec = as.vector(class_vec),
                 g = g,
                 Sinv = Sinv,
-                class_mu = class_mu,
+                class_mu = mclass_mu,
                 pi_k_vec = pi_k_vec))
     
 }
@@ -360,20 +362,23 @@ mclass_QDA <- function(data, class_name) {
     # 群別統計量
     g <- length(unique(data[[class_name]])) # 群の数
     pi_k_vec <- as.data.frame(table(data[[class_name]]))[, 2]/length(data[[class_name]]) # 事前確率
-    class_list <- split(X, data[[class_name]]) # 群別データ分割
-    class_mu <- lapply(class_list, function(x) colMeans(x)) # 群別平均
-    class_Sinv <- lapply(class_list, function(x) solve(cov(x))) # 群別S^-1
-    class_det <- lapply(class_list, function(x) det(cov(x))) # 群別det
+    
+    mclass_data <- split(X, data[[class_name]]) # 群別データ
+    mclass_mu <- lapply(mclass_data, function(x) colMeans(x)) # 群別平均ベクトル
+    mclass_data_cent <- lapply(seq_along(mclass_data), # 平均偏差データ
+                                  function(i) sweep(mclass_data[[i]], 2, mclass_mu[[i]])) 
+    mclass_Sinv <- lapply(mclass_data_cent, function(x) solve(cov(x))) # 群別S^-1
+    mclass_det <- lapply(mclass_data_cent, function(x) det(cov(x))) # 群別det
     
     # 判別関数の計算
     X <- data.matrix(X)
     score_mat <- matrix(NA, nrow = nrow(X), ncol = g) # scoring結果格納用
     ## 群の数に応じて判別境界を計算
     for (i in seq_len(g-1)) {
-        d_1 <- rowSums(sweep(X, 2, class_mu[[i]]) %*% class_Sinv[[i]] * sweep(X, 2, class_mu[[i]]))
-        d_2 <- rowSums(sweep(X, 2, class_mu[[g]]) %*% class_Sinv[[g]] * sweep(X, 2, class_mu[[g]]))
+        d_1 <- rowSums(sweep(X, 2, mclass_mu[[i]]) %*% mclass_Sinv[[i]] * sweep(X, 2, mclass_mu[[i]]))
+        d_2 <- rowSums(sweep(X, 2, mclass_mu[[g]]) %*% mclass_Sinv[[g]] * sweep(X, 2, mclass_mu[[g]]))
         diff_d <- d_2-d_1
-        score_mat[, i] <- log(sqrt(class_det[[g]]/class_det[[i]])) + (diff_d)/2 + log(pi_k_vec[[i]]/pi_k_vec[[g]])
+        score_mat[, i] <- log(sqrt(mclass_det[[g]]/mclass_det[[i]])) + (diff_d)/2 + log(pi_k_vec[[i]]/pi_k_vec[[g]])
     }
     score_mat[, g] <- 0 # ベースラインクラスのスコア==0
     class_vec <- apply(score_mat, 1, which.max) # 判別クラスの決定
@@ -381,9 +386,9 @@ mclass_QDA <- function(data, class_name) {
     # 結果の格納
     return(list(score_mat = score_mat,
                 class_vec = as.vector(class_vec),
-                class_mu = class_mu,
-                class_Sinv = class_Sinv,
-                class_det = class_det,
+                class_mu = mclass_mu,
+                class_Sinv = mclass_Sinv,
+                class_det = mclass_det,
                 g = g,
                 pi_k_vec = pi_k_vec))
 }
